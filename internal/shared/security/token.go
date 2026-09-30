@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"strings"
 )
 
 const sessionTokenBytes = 32
@@ -31,6 +32,18 @@ func GenerateSessionToken() (string, string, error) {
 
 func HashSessionToken(token string) string {
 	hash := sha256.Sum256([]byte(token))
+
+	return hex.EncodeToString(hash[:])
+}
+
+func HashIdentifier(value string) string {
+	normalized := strings.ToLower(
+		strings.TrimSpace(value),
+	)
+
+	hash := sha256.Sum256(
+		[]byte(normalized),
+	)
 
 	return hex.EncodeToString(hash[:])
 }

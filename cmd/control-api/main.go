@@ -1,7 +1,13 @@
 package main
 
-import "fmt"
+import (
+	"log"
+
+	"github.com/dev-gopi/authhub/internal/bootstrap"
+)
 
 func main() {
-	fmt.Println("Control API service starting...")
+	if err := bootstrap.RunControlAPI(); err != nil {
+		log.Fatal(err)
+	}
 }

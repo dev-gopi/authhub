@@ -21,6 +21,12 @@ type PlatformUserRepository interface {
 		ctx context.Context,
 		id uuid.UUID,
 	) (*platformmodel.PlatformUser, error)
+
+	UpdateLastLogin(
+		ctx context.Context,
+		id uuid.UUID,
+		at time.Time,
+	) error
 }
 
 type PasswordRepository interface {
@@ -66,5 +72,12 @@ type SessionRepository interface {
 		ctx context.Context,
 		platformUserID uuid.UUID,
 		reason string,
+	) error
+}
+
+type LoginAttemptRepository interface {
+	Create(
+		ctx context.Context,
+		attempt *rootmodel.PlatformLoginAttempt,
 	) error
 }
