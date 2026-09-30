@@ -6,18 +6,13 @@ import (
 	sharedmodel "github.com/dev-gopi/authhub/internal/shared/model"
 )
 
-// PlatformUser represents an identity that exists in the AuthHub
-// control plane.
+// PlatformUser represents a control-plane identity.
 //
-// A PlatformUser may be:
-//   - Root Admin
-//   - Primary Tenant Admin
-//   - Delegated Tenant Admin
+// Root Admin and tenant administrators are both platform users,
+// but root authorization is controlled exclusively through
+// IsRootAdmin.
 //
-// Tenant membership is stored separately in tenant_members.
-//
-// Root privileges must never be inferred from tenant membership.
-// They are explicitly controlled by IsRootAdmin.
+// Tenant membership and tenant roles are stored separately.
 type PlatformUser struct {
 	sharedmodel.BaseModel
 
@@ -31,29 +26,15 @@ type PlatformUser struct {
 
 	Status string `gorm:"type:text;not null;index:idx_platform_users_status" json:"status"`
 
-	// IsRootAdmin explicitly identifies a platform user that is
-	// permitted to operate the AuthHub root control plane.
-	//
-	// Authentication alone is not enough to access root resources.
-	// Root authorization middleware must additionally require this
-	// value to be true.
 	IsRootAdmin bool `gorm:"not null;default:false;index:idx_platform_users_root_admin" json:"is_root_admin"`
 
-	// CredentialVersion invalidates existing sessions whenever
-	// security-sensitive credentials are changed.
-	//
-	// Example:
-	//
-	// user credential_version = 5
-	// session credential_version = 4
-	//
-	// => session must be rejected.
 	CredentialVersion int64 `gorm:"not null;default:1" json:"credential_version"`
+
+	MustChangePassword bool `gorm:"not null;default:false" json:"must_change_password"`
 
 	LastLoginAt *time.Time `gorm:"type:timestamptz" json:"last_login_at,omitempty"`
 }
 
-// TableName explicitly defines the PostgreSQL table used by GORM.
 func (PlatformUser) TableName() string {
 	return "platform_users"
 }

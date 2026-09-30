@@ -23,6 +23,7 @@ type AppConfig struct {
 	ControlAPIAddr  string
 	RequestTimeout  time.Duration
 	ShutdownTimeout time.Duration
+	IssuerBaseURL   string
 }
 
 type PostgresConfig struct {
@@ -42,6 +43,8 @@ type RabbitMQConfig struct {
 type VaultConfig struct {
 	Address string
 	Token   string
+
+	TransitMount string
 }
 
 func Load() (*Config, error) {
@@ -71,6 +74,10 @@ func Load() (*Config, error) {
 			ControlAPIAddr:  getEnv("CONTROL_API_ADDR", ":8081"),
 			RequestTimeout:  requestTimeout,
 			ShutdownTimeout: shutdownTimeout,
+			IssuerBaseURL: getEnv(
+				"ISSUER_BASE_URL",
+				"http://localhost:8080",
+			),
 		},
 
 		Postgres: PostgresConfig{
@@ -90,6 +97,11 @@ func Load() (*Config, error) {
 		Vault: VaultConfig{
 			Address: os.Getenv("VAULT_ADDR"),
 			Token:   os.Getenv("VAULT_TOKEN"),
+
+			TransitMount: getEnv(
+				"VAULT_TRANSIT_MOUNT",
+				"transit",
+			),
 		},
 	}
 

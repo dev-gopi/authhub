@@ -20,8 +20,13 @@ import (
 	sharedmiddleware "github.com/dev-gopi/authhub/internal/shared/middleware"
 	"github.com/dev-gopi/authhub/internal/shared/security"
 
+	keymanagementservice "github.com/dev-gopi/authhub/internal/modules/keymanagement/service"
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
+
+	tenantrepository "github.com/dev-gopi/authhub/internal/modules/tenant/repository"
+	tenantservice "github.com/dev-gopi/authhub/internal/modules/tenant/service"
+	userpoolrepository "github.com/dev-gopi/authhub/internal/modules/userpool/repository"
 )
 
 func RunControlAPI() error {
@@ -88,6 +93,37 @@ func RunControlAPI() error {
 			passwordHasher,
 			appLogger,
 		)
+
+	keyManagementService := keymanagementservice.New(
+		deps.Vault,
+		cfg.Vault.TransitMount,
+		appLogger,
+	)
+
+	tenantRepo :=
+		tenantrepository.NewPostgresRepository(
+			deps.Postgres.DB,
+		)
+
+	tenantProfileRepo :=
+		tenantrepository.NewProfileRepository()
+
+	userPoolRepo :=
+		userpoolrepository.NewPostgresRepository()
+
+	tenantService :=
+		tenantservice.New(
+			deps.Postgres.DB,
+			tenantRepo,
+			tenantProfileRepo,
+			userPoolRepo,
+			keyManagementService,
+			cfg.App.IssuerBaseURL,
+			appLogger,
+		)
+
+	// Temporary until Task 5 tenant controller/router is wired.
+	_ = tenantService
 
 	if err != nil {
 		return fmt.Errorf(
