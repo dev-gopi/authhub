@@ -60,6 +60,10 @@ func RunAuthAPI() error {
 	)
 
 	router.Use(
+		sharedmiddleware.SecurityHeadersMiddleware,
+	)
+
+	router.Use(
 		sharedmiddleware.Timeout(
 			cfg.App.RequestTimeout,
 		),

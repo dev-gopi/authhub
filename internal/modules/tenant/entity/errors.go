@@ -1,12 +1,10 @@
 package entity
 
-import "fmt"
+import "errors"
 
-type TenantError struct {
-	Message string
-}
-
-func (e *TenantError) Error() string {
-	fmt.Printf("Tenant error: %s\n", e.Message)
-	return e.Message
-}
+var (
+	ErrUnauthorized         = errors.New("root authorization required")
+	ErrTenantAlreadyExists  = errors.New("tenant api label already exists")
+	ErrPrimaryAdminConflict = errors.New("primary admin username or email already exists")
+	ErrProvisioningFailed   = errors.New("tenant provisioning failed")
+)

@@ -31,6 +31,8 @@ CREATE TABLE user_pool_auth_policies (
 
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
+    created_by uuid,
+    updated_by uuid,
     deleted_at timestamptz,
 
     is_active boolean NOT NULL DEFAULT true,

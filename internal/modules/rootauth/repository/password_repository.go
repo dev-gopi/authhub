@@ -24,6 +24,14 @@ func NewPasswordRepository(
 	}
 }
 
+func (r *passwordRepository) Create(
+	ctx context.Context,
+	tx *gorm.DB,
+	password *rootmodel.PlatformPassword,
+) error {
+	return tx.WithContext(ctx).Create(password).Error
+}
+
 func (r *passwordRepository) FindByPlatformUserID(
 	ctx context.Context,
 	platformUserID uuid.UUID,

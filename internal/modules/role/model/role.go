@@ -4,6 +4,7 @@ import (
 	sharedmodel "github.com/dev-gopi/authhub/internal/shared/model"
 
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 )
 
 type Role struct {
@@ -16,6 +17,8 @@ type Role struct {
 	DisplayName string `gorm:"type:text;not null" json:"display_name"`
 
 	Description *string `gorm:"type:text" json:"description,omitempty"`
+
+	Metadata datatypes.JSON `gorm:"type:jsonb;not null;default:'{}'" json:"metadata"`
 
 	IsDefault bool `gorm:"not null;default:false" json:"is_default"`
 

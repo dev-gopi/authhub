@@ -22,6 +22,7 @@ func (s *Service) provision(
 	ctx context.Context,
 	tenant *tenantmodel.Tenant,
 	req dto.CreateTenantRequest,
+	actorID uuid.UUID,
 ) (*provisionResult, error) {
 	/*
 		STEP 1:
@@ -39,13 +40,18 @@ func (s *Service) provision(
 		)
 	}
 
+	credential, err := s.prepareTemporaryCredential(ctx, tenant.ID)
+	if err != nil {
+		return nil, fmt.Errorf("prepare primary admin temporary credential: %w", err)
+	}
+
 	result := &provisionResult{}
 
 	/*
 		STEP 2:
 		Create relational provisioning state atomically.
 	*/
-	err := s.db.
+	err = s.db.
 		WithContext(ctx).
 		Transaction(
 			func(tx *gorm.DB) error {
@@ -55,6 +61,7 @@ func (s *Service) provision(
 					tenant.ID,
 					req.Profile,
 					now,
+					&actorID,
 				)
 
 				if err := s.profiles.Create(
@@ -72,6 +79,7 @@ func (s *Service) provision(
 					tenant,
 					s.issuerBaseURL,
 					now,
+					&actorID,
 				)
 
 				if err := s.userPools.CreateUserPool(
@@ -91,6 +99,7 @@ func (s *Service) provision(
 					buildDefaultAuthPolicy(
 						pool.ID,
 						now,
+						&actorID,
 					)
 
 				if err := s.userPools.CreateAuthPolicy(
@@ -108,6 +117,7 @@ func (s *Service) provision(
 					buildDefaultPasswordPolicy(
 						pool.ID,
 						now,
+						&actorID,
 					)
 
 				if err := s.userPools.CreatePasswordPolicy(
@@ -125,6 +135,7 @@ func (s *Service) provision(
 					buildDefaultRecoveryPolicy(
 						pool.ID,
 						now,
+						&actorID,
 					)
 
 				if err := s.userPools.CreateRecoveryPolicy(
@@ -138,23 +149,29 @@ func (s *Service) provision(
 					)
 				}
 
-				/*
-					NEXT TASK 5.19:
+				roleResult, err := s.provisionDefaultRoles(ctx, tx, tenant.ID, actorID, now)
+				if err != nil {
+					return fmt.Errorf("provision default roles: %w", err)
+				}
+				result.PrimaryAdminRoleID = roleResult.PrimaryAdminRoleID
 
-					create default roles
+				adminResult, err := s.provisionPrimaryAdmin(
+					ctx, tx, tenant.ID, roleResult.PrimaryAdminRoleID, req.PrimaryAdmin, credential, actorID, now,
+				)
+				if err != nil {
+					return fmt.Errorf("provision primary tenant admin: %w", err)
+				}
+				result.PrimaryAdminID = adminResult.PlatformUserID
 
-					create primary admin
+				if err := s.createProvisioningEvents(
+					ctx, tx, tenant.ID, actorID, adminResult.PlatformUserID, req.PrimaryAdmin.Email, credential.EncryptedPlaintext, now,
+				); err != nil {
+					return err
+				}
 
-					create tenant member
-
-					assign primary_admin role
-
-					generate temporary password
-
-					create outbox event
-
-					set tenant ACTIVE
-				*/
+				if err := s.tenants.UpdateStatus(ctx, tx, tenant.ID, "active"); err != nil {
+					return fmt.Errorf("activate tenant: %w", err)
+				}
 
 				return nil
 			},
@@ -174,18 +191,10 @@ func buildTenantProfile(
 	tenantID uuid.UUID,
 	req dto.TenantProfileRequest,
 	now time.Time,
+	actorID *uuid.UUID,
 ) *tenantmodel.TenantProfile {
 	return &tenantmodel.TenantProfile{
-		BaseModel: sharedmodel.BaseModel{
-			ID: uuid.New(),
-
-			CreatedAt: now,
-			UpdatedAt: now,
-
-			IsActive: true,
-
-			IsDeleted: false,
-		},
+		BaseModel: sharedmodel.NewBaseModelAt(now, actorID),
 
 		TenantID: tenantID,
 
@@ -243,18 +252,10 @@ func buildDefaultUserPool(
 	tenant *tenantmodel.Tenant,
 	issuerBaseURL string,
 	now time.Time,
+	actorID *uuid.UUID,
 ) *userpoolmodel.UserPool {
 	return &userpoolmodel.UserPool{
-		BaseModel: sharedmodel.BaseModel{
-			ID: uuid.New(),
-
-			CreatedAt: now,
-			UpdatedAt: now,
-
-			IsActive: true,
-
-			IsDeleted: false,
-		},
+		BaseModel: sharedmodel.NewBaseModelAt(now, actorID),
 
 		TenantID: tenant.ID,
 
@@ -281,18 +282,10 @@ func buildDefaultUserPool(
 func buildDefaultAuthPolicy(
 	userPoolID uuid.UUID,
 	now time.Time,
+	actorID *uuid.UUID,
 ) *userpoolmodel.AuthPolicy {
 	return &userpoolmodel.AuthPolicy{
-		BaseModel: sharedmodel.BaseModel{
-			ID: uuid.New(),
-
-			CreatedAt: now,
-			UpdatedAt: now,
-
-			IsActive: true,
-
-			IsDeleted: false,
-		},
+		BaseModel: sharedmodel.NewBaseModelAt(now, actorID),
 
 		UserPoolID: userPoolID,
 
@@ -329,18 +322,10 @@ func buildDefaultAuthPolicy(
 func buildDefaultPasswordPolicy(
 	userPoolID uuid.UUID,
 	now time.Time,
+	actorID *uuid.UUID,
 ) *userpoolmodel.PasswordPolicy {
 	return &userpoolmodel.PasswordPolicy{
-		BaseModel: sharedmodel.BaseModel{
-			ID: uuid.New(),
-
-			CreatedAt: now,
-			UpdatedAt: now,
-
-			IsActive: true,
-
-			IsDeleted: false,
-		},
+		BaseModel: sharedmodel.NewBaseModelAt(now, actorID),
 
 		UserPoolID: userPoolID,
 
@@ -369,18 +354,10 @@ func buildDefaultPasswordPolicy(
 func buildDefaultRecoveryPolicy(
 	userPoolID uuid.UUID,
 	now time.Time,
+	actorID *uuid.UUID,
 ) *userpoolmodel.RecoveryPolicy {
 	return &userpoolmodel.RecoveryPolicy{
-		BaseModel: sharedmodel.BaseModel{
-			ID: uuid.New(),
-
-			CreatedAt: now,
-			UpdatedAt: now,
-
-			IsActive: true,
-
-			IsDeleted: false,
-		},
+		BaseModel: sharedmodel.NewBaseModelAt(now, actorID),
 
 		UserPoolID: userPoolID,
 

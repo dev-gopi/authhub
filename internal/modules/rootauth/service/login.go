@@ -252,13 +252,7 @@ func (s *Service) Login(
 	}
 
 	session := &rootmodel.PlatformSession{
-		BaseModel: sharedmodel.BaseModel{
-			ID:        uuid.New(),
-			CreatedAt: now,
-			UpdatedAt: now,
-			IsActive:  true,
-			IsDeleted: false,
-		},
+		BaseModel: sharedmodel.NewBaseModelAt(now, &user.ID),
 
 		PlatformUserID: user.ID,
 
@@ -368,13 +362,7 @@ func (s *Service) recordLoginAttempt(
 	}
 
 	attempt := &rootmodel.PlatformLoginAttempt{
-		BaseModel: sharedmodel.BaseModel{
-			ID:        uuid.New(),
-			CreatedAt: now,
-			UpdatedAt: now,
-			IsActive:  true,
-			IsDeleted: false,
-		},
+		BaseModel: sharedmodel.NewBaseModelAt(now, userID),
 
 		PlatformUserID: userID,
 

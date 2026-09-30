@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -154,4 +155,37 @@ func (c *Client) ReadTransitKey(
 	}
 
 	return secret, nil
+}
+
+func (c *Client) EncryptTransit(
+	ctx context.Context,
+	mount string,
+	keyName string,
+	plaintext []byte,
+) (string, error) {
+	mount = strings.Trim(strings.TrimSpace(mount), "/")
+	keyName = strings.TrimSpace(keyName)
+	if mount == "" || keyName == "" {
+		return "", fmt.Errorf("vault transit mount and key name are required")
+	}
+	if len(plaintext) == 0 {
+		return "", fmt.Errorf("vault transit plaintext is required")
+	}
+
+	path := fmt.Sprintf("%s/encrypt/%s", mount, keyName)
+	payload := map[string]interface{}{
+		"plaintext": base64.StdEncoding.EncodeToString(plaintext),
+	}
+	secret, err := c.Client.Logical().WriteWithContext(ctx, path, payload)
+	if err != nil {
+		return "", fmt.Errorf("encrypt with vault transit key %q: %w", keyName, err)
+	}
+	if secret == nil || secret.Data == nil {
+		return "", fmt.Errorf("vault transit key %q returned empty encryption response", keyName)
+	}
+	ciphertext, ok := secret.Data["ciphertext"].(string)
+	if !ok || ciphertext == "" {
+		return "", fmt.Errorf("vault transit key %q returned no ciphertext", keyName)
+	}
+	return ciphertext, nil
 }

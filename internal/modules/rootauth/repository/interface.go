@@ -30,6 +30,12 @@ type PlatformUserRepository interface {
 }
 
 type PasswordRepository interface {
+	Create(
+		ctx context.Context,
+		tx *gorm.DB,
+		password *rootmodel.PlatformPassword,
+	) error
+
 	FindByPlatformUserID(
 		ctx context.Context,
 		platformUserID uuid.UUID,

@@ -200,3 +200,14 @@ func decodeArgon2Hash(
 
 	return params, salt, hash, nil
 }
+
+// GenerateTemporaryPassword returns a high-entropy URL-safe temporary password.
+// The plaintext value must be returned only to the provisioning flow long enough
+// to hash it; it must never be persisted or logged.
+func GenerateTemporaryPassword() (string, error) {
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate temporary password: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}

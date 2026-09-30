@@ -18,12 +18,13 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Environment     string
-	AuthAPIAddr     string
-	ControlAPIAddr  string
-	RequestTimeout  time.Duration
-	ShutdownTimeout time.Duration
-	IssuerBaseURL   string
+	Environment                string
+	AuthAPIAddr                string
+	ControlAPIAddr             string
+	RequestTimeout             time.Duration
+	ShutdownTimeout            time.Duration
+	IssuerBaseURL              string
+	DefaultRoleTemplateVersion string
 }
 
 type PostgresConfig struct {
@@ -77,6 +78,10 @@ func Load() (*Config, error) {
 			IssuerBaseURL: getEnv(
 				"ISSUER_BASE_URL",
 				"http://localhost:8080",
+			),
+			DefaultRoleTemplateVersion: getEnv(
+				"DEFAULT_ROLE_TEMPLATE_VERSION",
+				"v1",
 			),
 		},
 

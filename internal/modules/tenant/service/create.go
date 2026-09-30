@@ -12,111 +12,46 @@ import (
 	tenantmodel "github.com/dev-gopi/authhub/internal/modules/tenant/model"
 	sharedmodel "github.com/dev-gopi/authhub/internal/shared/model"
 	"gorm.io/gorm"
-
-	"github.com/google/uuid"
 )
 
-func (s *Service) Create(
-	ctx context.Context,
-	req dto.CreateTenantRequest,
-	rootActor *rootentity.RootAuthContext,
-) (*dto.CreateTenantResponse, error) {
-	if rootActor == nil ||
-		!rootActor.IsRootAdmin {
-		return nil, errors.New(
-			"root authorization required",
-		)
+func (s *Service) Create(ctx context.Context, req dto.CreateTenantRequest, rootActor *rootentity.RootAuthContext) (*dto.CreateTenantResponse, error) {
+	if rootActor == nil || !rootActor.IsRootAdmin {
+		return nil, tenantentity.ErrUnauthorized
 	}
 
-	existing, err :=
-		s.tenants.FindByAPILabel(
-			ctx,
-			req.APILabel,
-		)
-
+	tenant, err := s.tenants.FindByAPILabel(ctx, req.APILabel)
 	if err != nil {
-		return nil, fmt.Errorf(
-			"check tenant api label: %w",
-			err,
-		)
+		return nil, fmt.Errorf("check tenant api label: %w", err)
+	}
+	if tenant != nil && tenant.Status != tenantentity.StatusProvisioning.String() {
+		return nil, tenantentity.ErrTenantAlreadyExists
 	}
 
-	if existing != nil {
-		return nil, errors.New(
-			"tenant api label already exists",
-		)
+	if tenant == nil {
+		now := time.Now().UTC()
+		tenant = &tenantmodel.Tenant{
+			BaseModel: sharedmodel.NewBaseModelAt(now, &rootActor.PlatformUserID),
+			APILabel:  req.APILabel, DisplayName: req.DisplayName,
+			Status: tenantentity.StatusProvisioning.String(), DefaultLocale: "en",
+		}
+		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error { return s.tenants.Create(ctx, tx, tenant) }); err != nil {
+			return nil, fmt.Errorf("create provisioning tenant: %w", err)
+		}
 	}
 
-	now := time.Now().UTC()
-
-	tenant := &tenantmodel.Tenant{
-		BaseModel: sharedmodel.BaseModel{
-			ID: uuid.New(),
-
-			CreatedAt: now,
-			UpdatedAt: now,
-
-			IsActive: true,
-
-			IsDeleted: false,
-		},
-
-		APILabel: req.APILabel,
-
-		DisplayName: req.DisplayName,
-
-		Status: tenantentity.
-			StatusProvisioning.
-			String(),
-
-		DefaultLocale: "en",
-	}
-
-	// Important:
-	//
-	// This transaction creates ONLY the minimal tenant
-	// record.
-	//
-	// We intentionally commit it before calling Vault.
-	err = s.db.
-		WithContext(ctx).
-		Transaction(
-			func(tx *gorm.DB) error {
-				return s.tenants.Create(
-					ctx,
-					tx,
-					tenant,
-				)
-			},
-		)
-
+	provisioned, err := s.provision(ctx, tenant, req, rootActor.PlatformUserID)
 	if err != nil {
-		return nil, fmt.Errorf(
-			"create provisioning tenant: %w",
-			err,
-		)
+		s.recordProvisioningFailureAudit(ctx, tenant.ID, rootActor.PlatformUserID, err)
+		if errors.Is(err, tenantentity.ErrPrimaryAdminConflict) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %v", tenantentity.ErrProvisioningFailed, err)
 	}
 
-	provisioned, err := s.provision(
-		ctx,
-		tenant,
-		req,
-	)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"tenant provisioning failed: %w",
-			err,
-		)
-	}
-	_ = provisioned
-
+	tenant.Status = tenantentity.StatusActive.String()
 	return &dto.CreateTenantResponse{
-		ID: tenant.ID,
-
-		APILabel: tenant.APILabel,
-
-		DisplayName: tenant.DisplayName,
-
-		Status: tenant.Status,
+		ID: tenant.ID, APILabel: tenant.APILabel, DisplayName: tenant.DisplayName, Status: tenant.Status,
+		PrimaryAdmin:    dto.PrimaryAdminResponse{ID: provisioned.PrimaryAdminID, Username: req.PrimaryAdmin.Username, Email: req.PrimaryAdmin.Email},
+		DefaultUserPool: dto.UserPoolResponse{ID: provisioned.UserPoolID, APILabel: "default"},
 	}, nil
 }

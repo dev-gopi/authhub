@@ -96,11 +96,11 @@ func main() {
 
 func createRootAdmin(ctx context.Context, db *gorm.DB, username, email, passwordHash string, params []byte) (*platformmodel.PlatformUser, error) {
 	now := time.Now().UTC()
-	base := func() sharedmodel.BaseModel {
-		return sharedmodel.BaseModel{ID: uuid.New(), CreatedAt: now, UpdatedAt: now, IsActive: true}
-	}
-	user := &platformmodel.PlatformUser{BaseModel: base(), Username: username, Email: email, DisplayName: username, Status: "active", IsRootAdmin: true, CredentialVersion: 1}
-	password := &rootmodel.PlatformPassword{BaseModel: base(), PlatformUserID: user.ID, PasswordHash: passwordHash, PasswordAlgorithm: "argon2id", PasswordParams: params, PasswordVersion: 1, ChangedAt: now}
+	userID := uuid.New()
+	userBase := sharedmodel.NewBaseModelAt(now, &userID)
+	userBase.ID = userID
+	user := &platformmodel.PlatformUser{BaseModel: userBase, Username: username, Email: email, DisplayName: username, Status: "active", IsRootAdmin: true, CredentialVersion: 1}
+	password := &rootmodel.PlatformPassword{BaseModel: sharedmodel.NewBaseModelAt(now, &userID), PlatformUserID: user.ID, PasswordHash: passwordHash, PasswordAlgorithm: "argon2id", PasswordParams: params, PasswordVersion: 1, ChangedAt: now}
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(user).Error; err != nil {
 			return fmt.Errorf("create platform user: %w", err)

@@ -13,7 +13,7 @@ import (
 )
 
 type Service struct {
-	vault *vaultinfra.Client
+	vault TransitClient
 
 	transitMount string
 
@@ -21,7 +21,7 @@ type Service struct {
 }
 
 func New(
-	vault *vaultinfra.Client,
+	vault TransitClient,
 	transitMount string,
 	logger *zap.Logger,
 ) *Service {
@@ -108,4 +108,13 @@ func (s *Service) ProvisionTenantKeys(
 	}
 
 	return nil
+}
+
+func (s *Service) EncryptTenantData(ctx context.Context, tenantID uuid.UUID, plaintext []byte) (string, error) {
+	keyName := keyentity.TenantKeyName(tenantID, keyconstants.KeyPurposeDataEncryption)
+	ciphertext, err := s.vault.EncryptTransit(ctx, s.transitMount, keyName, plaintext)
+	if err != nil {
+		return "", fmt.Errorf("encrypt tenant data: %w", err)
+	}
+	return ciphertext, nil
 }
