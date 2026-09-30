@@ -1,74 +1,39 @@
 package main
 
 import (
-	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"strings"
+	"time"
+	"unicode"
 
-	platformrepository "github.com/dev-gopi/authhub/internal/modules/platformuser/repository"
-	rootrepository "github.com/dev-gopi/authhub/internal/modules/rootauth/repository"
-	rootbootstrap "github.com/dev-gopi/authhub/internal/modules/rootauth/service"
-
-	"github.com/dev-gopi/authhub/internal/config"
+	platformmodel "github.com/dev-gopi/authhub/internal/modules/platformuser/model"
+	rootmodel "github.com/dev-gopi/authhub/internal/modules/rootauth/model"
 	"github.com/dev-gopi/authhub/internal/platform/database"
+	sharedmodel "github.com/dev-gopi/authhub/internal/shared/model"
 	"github.com/dev-gopi/authhub/internal/shared/security"
 
+	"github.com/google/uuid"
+	"github.com/joho/godotenv"
 	"golang.org/x/term"
+	"gorm.io/gorm"
 )
 
 func main() {
-	ctx := context.Background()
-
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf(
-			"load configuration: %v",
-			err,
-		)
+	username := flag.String("username", "", "root administrator username")
+	email := flag.String("email", "", "root administrator email address")
+	flag.Parse()
+	if flag.NArg() != 0 || strings.TrimSpace(*username) == "" || strings.TrimSpace(*email) == "" {
+		log.Fatal("usage: root-admin --username USERNAME --email EMAIL")
 	}
 
-	postgresDB, err := database.NewPostgres(
-		cfg.Postgres.DSN,
-	)
-	if err != nil {
-		log.Fatalf(
-			"connect postgres: %v",
-			err,
-		)
-	}
-
-	defer func() {
-		if err := postgresDB.Close(); err != nil {
-			log.Printf(
-				"close postgres: %v",
-				err,
-			)
-		}
-	}()
-
-	reader := bufio.NewReader(os.Stdin)
-
-	username := readLine(
-		reader,
-		"Username: ",
-	)
-
-	email := readLine(
-		reader,
-		"Email: ",
-	)
-
-	displayName := readLine(
-		reader,
-		"Display name: ",
-	)
-
-	password, err := readPassword(
-		"Password: ",
-	)
+	password, err := readPassword("Password: ")
 	if err != nil {
 		log.Fatalf(
 			"read password: %v",
@@ -76,9 +41,7 @@ func main() {
 		)
 	}
 
-	confirmPassword, err := readPassword(
-		"Confirm password: ",
-	)
+	confirmPassword, err := readPassword("Confirm password: ")
 	if err != nil {
 		log.Fatalf(
 			"read password confirmation: %v",
@@ -86,46 +49,40 @@ func main() {
 		)
 	}
 
-	if password != confirmPassword {
+	defer clear(password)
+	defer clear(confirmPassword)
+	if !bytes.Equal(password, confirmPassword) {
 		log.Fatal(
 			"password confirmation does not match",
 		)
 	}
 
-	platformUserRepository :=
-		platformrepository.NewPostgresRepository(
-			postgresDB.DB,
-		)
+	if err := validatePassword(string(password)); err != nil {
+		log.Fatalf("invalid password: %v", err)
+	}
+	// Load local development settings when present. Production deployments
+	// should inject POSTGRES_DSN directly into the environment.
+	_ = godotenv.Load()
+	postgresDSN := os.Getenv("POSTGRES_DSN")
+	if postgresDSN == "" {
+		log.Fatal("POSTGRES_DSN is required")
+	}
 
-	passwordRepository :=
-		rootrepository.NewPasswordRepository(
-			postgresDB.DB,
-		)
-
-	passwordHasher :=
-		security.NewPasswordHasher()
-
-	service := rootbootstrap.NewService(
-		postgresDB,
-		platformUserRepository,
-		passwordRepository,
-		passwordHasher,
-	)
-
-	user, err := service.CreateRootAdmin(
-		ctx,
-		rootbootstrap.CreateRootAdminRequest{
-			Username:    username,
-			Email:       email,
-			DisplayName: displayName,
-			Password:    password,
-		},
-	)
-
-	// Reduce the amount of time plaintext passwords
-	// remain referenced by this function.
-	password = ""
-	confirmPassword = ""
+	postgresDB, err := database.NewPostgres(postgresDSN)
+	if err != nil {
+		log.Fatalf("connect postgres: %v", err)
+	}
+	defer postgresDB.Close()
+	hasher := security.NewPasswordHasher()
+	passwordHash, err := hasher.Hash(string(password))
+	if err != nil {
+		log.Fatalf("hash password: %v", err)
+	}
+	params, err := json.Marshal(hasher.Params())
+	if err != nil {
+		log.Fatalf("marshal password parameters: %v", err)
+	}
+	user, err := createRootAdmin(context.Background(), postgresDB.DB, strings.TrimSpace(*username), strings.ToLower(strings.TrimSpace(*email)), passwordHash, params)
 
 	if err != nil {
 		log.Fatalf(
@@ -134,49 +91,69 @@ func main() {
 		)
 	}
 
-	fmt.Println()
-	fmt.Println("Root Admin created successfully.")
-	fmt.Printf(
-		"ID: %s\n",
-		user.ID,
-	)
-	fmt.Printf(
-		"Username: %s\n",
-		user.Username,
-	)
+	fmt.Printf("Root admin created successfully (ID: %s, username: %s).\n", user.ID, user.Username)
 }
 
-func readLine(
-	reader *bufio.Reader,
-	label string,
-) string {
-	fmt.Print(label)
-
-	value, err := reader.ReadString('\n')
-	if err != nil {
-		log.Fatalf(
-			"read input: %v",
-			err,
-		)
+func createRootAdmin(ctx context.Context, db *gorm.DB, username, email, passwordHash string, params []byte) (*platformmodel.PlatformUser, error) {
+	now := time.Now().UTC()
+	base := func() sharedmodel.BaseModel {
+		return sharedmodel.BaseModel{ID: uuid.New(), CreatedAt: now, UpdatedAt: now, IsActive: true}
 	}
-
-	return strings.TrimSpace(value)
+	user := &platformmodel.PlatformUser{BaseModel: base(), Username: username, Email: email, DisplayName: username, Status: "active", IsRootAdmin: true, CredentialVersion: 1}
+	password := &rootmodel.PlatformPassword{BaseModel: base(), PlatformUserID: user.ID, PasswordHash: passwordHash, PasswordAlgorithm: "argon2id", PasswordParams: params, PasswordVersion: 1, ChangedAt: now}
+	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(user).Error; err != nil {
+			return fmt.Errorf("create platform user: %w", err)
+		}
+		if err := tx.Create(password).Error; err != nil {
+			return fmt.Errorf("create platform user password: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return user, nil
 }
 
 func readPassword(
 	label string,
-) (string, error) {
+) ([]byte, error) {
 	fmt.Print(label)
 
-	value, err := term.ReadPassword(
-		int(os.Stdin.Fd()),
-	)
+	value, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	return value, err
+}
 
-	fmt.Println()
-
-	if err != nil {
-		return "", err
+func clear(value []byte) {
+	for i := range value {
+		value[i] = 0
 	}
+}
 
-	return string(value), nil
+func validatePassword(password string) error {
+	if len(password) < 14 {
+		return errors.New("must contain at least 14 characters")
+	}
+	if len(password) > 256 {
+		return errors.New("exceeds 256 characters")
+	}
+	var upper, lower, number bool
+	for _, ch := range password {
+		switch {
+		case unicode.IsUpper(ch):
+			upper = true
+		case unicode.IsLower(ch):
+			lower = true
+		case unicode.IsNumber(ch):
+			number = true
+		}
+	}
+	if !upper || !lower || !number {
+		return errors.New("must contain uppercase, lowercase, and numeric characters")
+	}
+	if strings.Contains(strings.ToLower(password), "password") {
+		return errors.New("is too weak")
+	}
+	return nil
 }
