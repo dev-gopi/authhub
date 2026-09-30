@@ -1,0 +1,392 @@
+name: authhub
+
+services:
+
+  # =====================================================
+  # PostgreSQL
+  # =====================================================
+  postgres:
+    image: postgres:16.15-alpine3.23
+    container_name: authhub-postgres
+
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-authhub}
+      POSTGRES_USER: ${POSTGRES_USER:-authhub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    # Exposed only for running Go services directly on the host.
+    ports:
+      - "127.0.0.1:5432:5432"
+
+    networks:
+      - authhub-internal
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-authhub} -d ${POSTGRES_DB:-authhub}"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+
+  # =====================================================
+  # Redis
+  # =====================================================
+  redis:
+    image: redis:7-alpine
+    container_name: authhub-redis
+
+    restart: unless-stopped
+
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--requirepass",
+        "${REDIS_PASSWORD}"
+      ]
+
+    volumes:
+      - redis_data:/data
+
+    # Exposed only for running Go services directly on the host.
+    ports:
+      - "127.0.0.1:6379:6379"
+
+    networks:
+      - authhub-internal
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "-a",
+          "${REDIS_PASSWORD}",
+          "ping"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+
+  # =====================================================
+  # RabbitMQ
+  # =====================================================
+  rabbitmq:
+    image: rabbitmq:4.3.6-management
+    container_name: authhub-rabbitmq
+
+    restart: unless-stopped
+
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-authhub}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-authhub}
+
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+    networks:
+      - authhub-internal
+
+    # Management UI for local/staging.
+    # Do not expose publicly in real production.
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "rabbitmq-diagnostics",
+          "-q",
+          "ping"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+
+  # =====================================================
+  # Vault
+  #
+  # DEVELOPMENT / INTEGRATION MODE ONLY
+  # Replace with Vault HA in real production.
+  # =====================================================
+  vault:
+    image: hashicorp/vault:1.20
+    container_name: authhub-vault
+
+    restart: unless-stopped
+
+    cap_add:
+      - IPC_LOCK
+
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_ROOT_TOKEN}
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+
+    command:
+      [
+        "server",
+        "-dev",
+        "-dev-root-token-id=${VAULT_DEV_ROOT_TOKEN}"
+      ]
+
+    networks:
+      - authhub-internal
+
+    ports:
+      - "127.0.0.1:8200:8200"
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--spider",
+          "-q",
+          "http://127.0.0.1:8200/v1/sys/health"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+
+  # =====================================================
+  # Auth API
+  # =====================================================
+  auth-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: auth-api
+        VERSION: ${APP_VERSION:-dev}
+        COMMIT: ${GIT_COMMIT:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+
+    image: authhub/auth-api:${APP_VERSION:-dev}
+
+    container_name: authhub-auth-api
+
+    restart: unless-stopped
+
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+
+      AUTH_API_ADDR: ":8080"
+
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-30s}
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-15s}
+
+      POSTGRES_DSN: >-
+        host=postgres
+        user=${POSTGRES_USER:-authhub}
+        password=${POSTGRES_PASSWORD}
+        dbname=${POSTGRES_DB:-authhub}
+        port=5432
+        sslmode=disable
+        TimeZone=UTC
+
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_DB: "0"
+
+      RABBITMQ_URL: >-
+        amqp://${RABBITMQ_USER:-authhub}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-authhub}
+
+      VAULT_ADDR: "http://vault:8200"
+      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN}
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+      redis:
+        condition: service_healthy
+
+      rabbitmq:
+        condition: service_healthy
+
+      vault:
+        condition: service_healthy
+
+    ports:
+      - "8080:8080"
+
+    networks:
+      - authhub-internal
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --spider -q http://127.0.0.1:8080/health || exit 1"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    security_opt:
+      - no-new-privileges:true
+
+    read_only: true
+
+    tmpfs:
+      - /tmp
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+
+  # =====================================================
+  # Control API
+  # =====================================================
+  control-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: control-api
+        VERSION: ${APP_VERSION:-dev}
+        COMMIT: ${GIT_COMMIT:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+
+    image: authhub/control-api:${APP_VERSION:-dev}
+
+    container_name: authhub-control-api
+
+    restart: unless-stopped
+
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+
+      CONTROL_API_ADDR: ":8081"
+
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-30s}
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-15s}
+
+      POSTGRES_DSN: >-
+        host=postgres
+        user=${POSTGRES_USER:-authhub}
+        password=${POSTGRES_PASSWORD}
+        dbname=${POSTGRES_DB:-authhub}
+        port=5432
+        sslmode=disable
+        TimeZone=UTC
+
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_DB: "0"
+
+      RABBITMQ_URL: >-
+        amqp://${RABBITMQ_USER:-authhub}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-authhub}
+
+      VAULT_ADDR: "http://vault:8200"
+      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN}
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+      redis:
+        condition: service_healthy
+
+      rabbitmq:
+        condition: service_healthy
+
+      vault:
+        condition: service_healthy
+
+    ports:
+      - "8081:8081"
+
+    networks:
+      - authhub-internal
+
+    security_opt:
+      - no-new-privileges:true
+
+    read_only: true
+
+    tmpfs:
+      - /tmp
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+
+# =========================================================
+# Networks
+# =========================================================
+networks:
+  authhub-internal:
+    driver: bridge
+
+
+# =========================================================
+# Persistent Volumes
+# =========================================================
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:

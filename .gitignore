@@ -1,0 +1,31 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Go build artifacts
+bin/
+dist/
+coverage.out
+*.test
+*.prof
+
+# Docker runtime data
+postgres_data/
+redis_data/
+rabbitmq_data/
+vault_data/
+
+# Logs and temporary files
+*.log
+*.tmp
+tmp/
+
+# Editor and operating-system files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
